@@ -221,6 +221,15 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
                         max_joint_step=0.045,
                         posture_target=None,
                     )
+                elif phase in {"right_above", "open_above", "descend", "close", "lift"}:
+                    right_error = right.move_to_position(
+                        env.data,
+                        right_target,
+                        gain=0.45,
+                        max_joint_step=0.055,
+                        posture_target=right_grasp_posture,
+                        posture_gain=0.16,
+                    )
                 else:
                     right_error = right.move_to_position(
                         env.data,
