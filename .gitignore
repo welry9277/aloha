@@ -1,6 +1,13 @@
+
+# Generated datasets
+camera_outputs/
+demonstrations*/
+results/
+
+# External dependency
 mujoco_menagerie/
+
+# Local environment
 .venv/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
