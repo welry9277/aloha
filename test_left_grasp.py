@@ -36,21 +36,21 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
     if randomize:
         tray_start = np.array(
             [
-                rng.uniform(-0.055, -0.025),
+                rng.uniform(0.025, 0.055),
                 rng.uniform(0.135, 0.165),
                 0.018,
             ]
         )
         block_start = np.array(
             [
-                rng.uniform(0.025, 0.055),
+                rng.uniform(-0.055, -0.025),
                 rng.uniform(-0.140, -0.105),
                 0.025,
             ]
         )
     else:
-        tray_start = np.array([-0.05, 0.15, 0.018])
-        block_start = np.array([0.05, -0.12, 0.025])
+        tray_start = np.array([0.05, 0.15, 0.018])
+        block_start = np.array([-0.05, -0.12, 0.025])
     tray_goal = tray_start.copy()
 
     env._set_freejoint_pose(env.tray_joint, tray_start)
@@ -67,33 +67,33 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
     block_start = observation["block_position"].copy()
     block_dof_address = env.model.jnt_dofadr[env.block_joint]
 
-    right = AlohaArmController(env.model, "right")
-    right_sites = (
-        site_id(env.model, "right/left_finger"),
-        site_id(env.model, "right/right_finger"),
+    left = AlohaArmController(env.model, "left")
+    left_sites = (
+        site_id(env.model, "left/left_finger"),
+        site_id(env.model, "left/right_finger"),
     )
 
-    right_finger_joint = mujoco.mj_name2id(
-        env.model, mujoco.mjtObj.mjOBJ_JOINT, "right/left_finger"
+    left_finger_joint = mujoco.mj_name2id(
+        env.model, mujoco.mjtObj.mjOBJ_JOINT, "left/left_finger"
     )
-    right_finger_qpos = env.model.jnt_qposadr[right_finger_joint]
+    left_finger_qpos = env.model.jnt_qposadr[left_finger_joint]
 
     grasp_midpoint = block_start + np.array([0.0, 0.0, 0.005])
     above_midpoint = grasp_midpoint + np.array([0.0, 0.0, 0.13])
     lift_midpoint = grasp_midpoint + np.array([0.0, 0.0, 0.16])
     place_above = tray_goal + np.array([0.0, 0.0, 0.22])
     place_down = tray_goal + np.array([0.0, 0.0, 0.060])
-    right_mid_to_block = np.array([0.0, 0.0, 0.005])
+    left_mid_to_block = np.array([0.0, 0.0, 0.005])
 
-    print("right-only task: right block place")
+    print("left-only task: left block place")
     print("tray goal:", tray_goal)
     print("block start:", block_start)
-    print("right above waypoint:", above_midpoint)
-    print("right place-above waypoint:", place_above)
+    print("left above waypoint:", above_midpoint)
+    print("left place-above waypoint:", place_above)
 
-    right.set_gripper(env.data, 0.002)
+    left.set_gripper(env.data, 0.002)
 
-    instruction = "Use the right arm to pick up the red block and place it in the tray."
+    instruction = "Use the left arm to pick up the red block and place it in the tray."
     recorder = None
     if record_path is not None:
         recorder = DemonstrationRecorder(
@@ -113,10 +113,10 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
     done_wait_seconds = 2.0 if show_viewer else 0.0
 
     with viewer_context as viewer:
-        phase = "right_above"
+        phase = "left_above"
         phase_start = env.data.time
         last_print = 0.0
-        right_grasp_posture = None
+        left_grasp_posture = None
         drop_center = tray_goal.copy()
         place_above_settle_start = None
         finished_reported = False
@@ -129,10 +129,10 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
             obs = env.observation()
             tray_now = obs["tray_position"]
             block_now = obs["block_position"]
-            right_mid = finger_midpoint(env.data, *right_sites)
+            left_mid = finger_midpoint(env.data, *left_sites)
 
             if phase in {"close", "lift", "place_above"}:
-                right_mid_to_block = right_mid - block_now
+                left_mid_to_block = left_mid - block_now
 
             if phase == "place_above":
                 drop_center = tray_now.copy()
@@ -142,50 +142,50 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
                 place_above = drop_center + np.array([0.0, 0.0, 0.22])
                 place_down = drop_center + np.array([0.0, 0.0, 0.060])
 
-            if phase in {"right_above", "open_above"}:
-                right_desired = above_midpoint
+            if phase in {"left_above", "open_above"}:
+                left_desired = above_midpoint
             elif phase in {"descend", "close"}:
-                right_desired = grasp_midpoint
+                left_desired = grasp_midpoint
             elif phase == "lift":
-                right_desired = lift_midpoint
+                left_desired = lift_midpoint
             elif phase in {"place_above", "retreat", "done"}:
-                right_desired = place_above + right_mid_to_block
+                left_desired = place_above + left_mid_to_block
             else:
-                right_desired = place_down + right_mid_to_block
+                left_desired = place_down + left_mid_to_block
 
-            right_target = midpoint_target(
-                env.data, right, right_mid, right_desired
+            left_target = midpoint_target(
+                env.data, left, left_mid, left_desired
             )
             if phase in {"retreat", "done"}:
                 # After release, prioritize a clean vertical escape. The
                 # grasp posture regularizer can oppose this large motion.
-                right_error = right.move_to_position(
+                left_error = left.move_to_position(
                     env.data,
-                    right_target,
+                    left_target,
                     gain=0.40,
                     max_joint_step=0.045,
                     posture_target=None,
                 )
             elif phase == "place_down":
-                right_error = right.move_to_position(
+                left_error = left.move_to_position(
                     env.data,
-                    right_target,
+                    left_target,
                     gain=0.20,
                     max_joint_step=0.020,
-                    posture_target=right_grasp_posture,
+                    posture_target=left_grasp_posture,
                     posture_gain=0.16,
                 )
             else:
-                right_error = right.move_to_position(
+                left_error = left.move_to_position(
                     env.data,
-                    right_target,
-                    posture_target=right_grasp_posture,
+                    left_target,
+                    posture_target=left_grasp_posture,
                     posture_gain=0.16,
                 )
             if phase in {"open_above", "descend", "release", "retreat", "done"}:
-                right.set_gripper(env.data, 0.037)
+                left.set_gripper(env.data, 0.037)
             else:
-                right.set_gripper(env.data, 0.002)
+                left.set_gripper(env.data, 0.002)
 
             if recorder is not None:
                 recorder.record_step()
@@ -196,10 +196,10 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
             obs = env.observation()
             tray_now = obs["tray_position"]
             block_now = obs["block_position"]
-            right_mid = finger_midpoint(env.data, *right_sites)
-            right_error = float(np.linalg.norm(right_mid - right_desired))
-            block_xy_error = float(np.linalg.norm(right_mid[:2] - block_now[:2]))
-            block_z_offset = float(right_mid[2] - block_now[2])
+            left_mid = finger_midpoint(env.data, *left_sites)
+            left_error = float(np.linalg.norm(left_mid - left_desired))
+            block_xy_error = float(np.linalg.norm(left_mid[:2] - block_now[:2]))
+            block_z_offset = float(left_mid[2] - block_now[2])
             block_lift = float(block_now[2] - block_start[2])
             block_speed = float(
                 np.linalg.norm(
@@ -210,12 +210,12 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
             )
             block_to_tray = float(np.linalg.norm(block_now[:2] - tray_now[:2]))
             block_z_to_tray = float(block_now[2] - tray_now[2])
-            actual_right_finger = float(env.data.qpos[right_finger_qpos])
+            actual_left_finger = float(env.data.qpos[left_finger_qpos])
 
             if loop_start - last_print >= 0.5:
                 print(
                     f"phase={phase} | "
-                    f"R err={right_error:.3f} grip={actual_right_finger:.3f} | "
+                    f"L err={left_error:.3f} grip={actual_left_finger:.3f} | "
                     f"block xy={block_xy_error:.3f} z={block_z_offset:.3f} | "
                     f"lift={block_lift:.3f} speed={block_speed:.3f} | "
                     f"tray_xy={block_to_tray:.3f} z={block_z_to_tray:.3f}"
@@ -224,17 +224,17 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
 
             next_phase = None
             if (
-                phase == "right_above"
+                phase == "left_above"
                 and block_xy_error < 0.035
                 and block_z_offset > 0.070
             ):
-                right_grasp_posture = env.data.qpos[
-                    right.qpos_addresses
+                left_grasp_posture = env.data.qpos[
+                    left.qpos_addresses
                 ].copy()
                 next_phase = "open_above"
             elif (
                 phase == "open_above"
-                and actual_right_finger > 0.033
+                and actual_left_finger > 0.033
                 and phase_elapsed > 0.5
             ):
                 next_phase = "descend"
@@ -247,13 +247,13 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
             elif phase == "close" and phase_elapsed > 1.5:
                 next_phase = "lift"
             elif phase == "lift" and block_lift >= 0.080:
-                right_mid_to_block = right_mid - block_now
+                left_mid_to_block = left_mid - block_now
                 place_above_settle_start = None
                 next_phase = "place_above"
             elif phase == "place_above":
                 place_above_ready = (
                     block_to_tray < 0.045
-                    and right_error < 0.080
+                    and left_error < 0.080
                     and block_z_to_tray > 0.150
                 )
                 place_above_fallback = (
@@ -266,7 +266,7 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
                         place_above_settle_start = env.data.time
                     elif env.data.time - place_above_settle_start >= 1.0:
                         drop_center = tray_now.copy()
-                        right_mid_to_block = right_mid - block_now
+                        left_mid_to_block = left_mid - block_now
                         next_phase = "place_down"
                 else:
                     place_above_settle_start = None
@@ -274,17 +274,17 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
                 phase == "place_down"
                 and block_to_tray < 0.080
                 and (block_z_to_tray < 0.090 or phase_elapsed > 2.5)
-                and (right_error < 0.080 or phase_elapsed > 2.5)
+                and (left_error < 0.080 or phase_elapsed > 2.5)
             ):
                 next_phase = "release"
             elif (
                 phase == "release"
                 and phase_elapsed > 2.0
-                and actual_right_finger > 0.033
+                and actual_left_finger > 0.033
                 and block_speed < 0.050
             ):
                 next_phase = "retreat"
-            elif phase == "retreat" and right_mid[2] - block_now[2] > 0.040:
+            elif phase == "retreat" and left_mid[2] - block_now[2] > 0.040:
                 next_phase = "done"
 
             if next_phase is not None:
@@ -314,7 +314,7 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
             timeout = 55.0 if phase not in {"close", "release", "done"} else 20.0
             if phase_elapsed > timeout and phase != "done":
                 print(
-                    f"phase timeout: {phase}, right_error={right_error:.3f}, "
+                    f"phase timeout: {phase}, left_error={left_error:.3f}, "
                     f"block_xy={block_xy_error:.3f}, "
                     f"block_z={block_z_offset:.3f}, "
                     f"tray_xy={block_to_tray:.3f}"
