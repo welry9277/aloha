@@ -35,11 +35,11 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
     rng = np.random.default_rng(seed)
     if randomize:
         tray_y = rng.uniform(0.135, 0.165)
-        tray_start = np.array(
-            [rng.uniform(-0.055, -0.025), tray_y, 0.018]
-        )
+        tray_start_x = rng.uniform(-0.060, -0.040)
+        tray_goal_x = tray_start_x + rng.uniform(0.145, 0.165)
+        tray_start = np.array([tray_start_x, tray_y, 0.018])
         tray_goal = np.array(
-            [rng.uniform(0.080, 0.115), tray_y, 0.018]
+            [tray_goal_x, tray_y, 0.018]
         )
         block_start = np.array(
             [
@@ -49,8 +49,8 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
             ]
         )
     else:
-        tray_start = np.array([-0.04, 0.15, 0.018])
-        tray_goal = np.array([0.10, 0.15, 0.018])
+        tray_start = np.array([-0.055, 0.15, 0.018])
+        tray_goal = np.array([0.100, 0.15, 0.018])
         block_start = np.array([0.0, -0.12, 0.025])
 
     env._set_freejoint_pose(env.tray_joint, tray_start)
@@ -106,9 +106,16 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
 
     grasp_midpoint = block_start + np.array([0.0, 0.0, 0.005])
     above_midpoint = grasp_midpoint + np.array([0.0, 0.0, 0.13])
-    lift_midpoint = grasp_midpoint + np.array([0.0, 0.0, 0.16])
-    place_above = tray_goal + np.array([0.0, 0.0, 0.17])
-    place_down = tray_goal + np.array([0.0, 0.0, 0.075])
+    waypoint_clearance = 0.12
+    pick_lift_midpoint = grasp_midpoint + np.array(
+        [0.0, 0.0, waypoint_clearance]
+    )
+    close_hold_seconds = 0.45
+    carry_duration = 1.05
+    place_above_settle_seconds = 0.35
+    place_down = tray_goal + np.array([0.0, 0.0, 0.060])
+    place_above = place_down + np.array([0.0, 0.0, waypoint_clearance])
+    right_mid_to_block = np.array([0.0, 0.0, 0.005])
 
     print("bimanual task: left tray push + right block place")
     print("tray start:", tray_start)
@@ -147,6 +154,11 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
         phase_start = env.data.time
         last_print = 0.0
         right_grasp_posture = None
+        drop_center = tray_goal.copy()
+        place_above_settle_start = None
+        carry_progress = 0.0
+        carry_start_xy = None
+        carry_z = place_above[2] + right_mid_to_block[2]
         finished_reported = False
         done_wall_start = None
 
@@ -154,8 +166,30 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
             loop_start = time.time()
             phase_elapsed = env.data.time - phase_start
 
+            obs = env.observation()
+            tray_now = obs["tray_position"]
+            block_now = obs["block_position"]
+            block_z_to_tray_now = float(block_now[2] - tray_now[2])
             left_mid = finger_midpoint(env.data, *left_sites)
             right_mid = finger_midpoint(env.data, *right_sites)
+
+            if phase in {"close", "pick_lift", "carry_horizontal", "place_above"}:
+                right_mid_to_block = right_mid - block_now
+
+            if phase in {
+                "carry_horizontal",
+                "place_above",
+                "place_down",
+                "release",
+                "retreat",
+                "done",
+            }:
+                # Align over the tray first, then keep this XY fixed so
+                # place_down is a vertical top-down drop.
+                place_down = drop_center + np.array([0.0, 0.0, 0.060])
+                place_above = place_down + np.array(
+                    [0.0, 0.0, waypoint_clearance]
+                )
 
             if phase == "tray_approach":
                 left_desired = push_approach
@@ -201,12 +235,53 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
                     right_desired = above_midpoint
                 elif phase in {"descend", "close"}:
                     right_desired = grasp_midpoint
-                elif phase == "lift":
-                    right_desired = lift_midpoint
+                elif phase == "pick_lift":
+                    right_desired = pick_lift_midpoint
+                elif phase == "carry_horizontal":
+                    carry_goal = place_above + right_mid_to_block
+                    if carry_start_xy is None:
+                        carry_start_xy = right_mid[:2].copy()
+                    z_ready = (
+                        right_mid[2] >= carry_z - 0.020
+                        and block_z_to_tray_now > 0.105
+                    )
+                    z_soft_ready = (
+                        phase_elapsed > 0.25
+                        and right_mid[2] >= carry_z - 0.040
+                        and block_z_to_tray_now > 0.095
+                    )
+                    z_warmup_ready = (
+                        phase_elapsed > 0.05
+                        and right_mid[2] >= carry_z - 0.065
+                        and block_z_to_tray_now > 0.085
+                    )
+                    if z_ready:
+                        carry_step_scale = 1.0
+                    elif z_soft_ready:
+                        carry_step_scale = 0.70
+                    elif z_warmup_ready:
+                        carry_step_scale = 0.35
+                    else:
+                        carry_step_scale = 0.0
+                    if carry_step_scale > 0.0:
+                        carry_progress = min(
+                            1.0,
+                            carry_progress
+                            + (
+                                carry_step_scale
+                                * env.model.opt.timestep
+                                / carry_duration
+                            ),
+                        )
+                    carry_xy = (
+                        carry_start_xy
+                        + carry_progress * (carry_goal[:2] - carry_start_xy)
+                    )
+                    right_desired = np.array([carry_xy[0], carry_xy[1], carry_z])
                 elif phase in {"place_above", "retreat", "done"}:
-                    right_desired = place_above
+                    right_desired = place_above + right_mid_to_block
                 else:
-                    right_desired = place_down
+                    right_desired = place_down + right_mid_to_block
 
                 right_target = midpoint_target(
                     env.data, right, right_mid, right_desired
@@ -221,14 +296,40 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
                         max_joint_step=0.045,
                         posture_target=None,
                     )
-                elif phase in {"right_above", "open_above", "descend", "close", "lift"}:
+                elif phase == "place_down":
                     right_error = right.move_to_position(
                         env.data,
                         right_target,
-                        gain=0.45,
-                        max_joint_step=0.055,
+                        gain=0.20,
+                        max_joint_step=0.020,
                         posture_target=right_grasp_posture,
                         posture_gain=0.16,
+                    )
+                elif phase == "pick_lift":
+                    right_error = right.move_to_position(
+                        env.data,
+                        right_target,
+                        gain=0.55,
+                        max_joint_step=0.065,
+                        posture_target=right_grasp_posture,
+                        posture_gain=0.16,
+                    )
+                elif phase == "place_above":
+                    right_error = right.move_to_position(
+                        env.data,
+                        right_target,
+                        gain=0.50,
+                        max_joint_step=0.060,
+                        posture_target=right_grasp_posture,
+                        posture_gain=0.04,
+                    )
+                elif phase == "carry_horizontal":
+                    right_error = right.move_to_position(
+                        env.data,
+                        right_target,
+                        gain=0.56,
+                        max_joint_step=0.060,
+                        posture_target=None,
                     )
                 else:
                     right_error = right.move_to_position(
@@ -271,6 +372,7 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
                 )
             )
             block_to_tray = float(np.linalg.norm(block_now[:2] - tray_now[:2]))
+            block_z_to_tray = float(block_now[2] - tray_now[2])
             actual_right_finger = float(env.data.qpos[right_finger_qpos])
 
             if loop_start - last_print >= 0.5:
@@ -281,7 +383,7 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
                     f"R err={right_error:.3f} grip={actual_right_finger:.3f} | "
                     f"block xy={block_xy_error:.3f} z={block_z_offset:.3f} | "
                     f"lift={block_lift:.3f} speed={block_speed:.3f} | "
-                    f"tray_xy={block_to_tray:.3f}"
+                    f"tray_xy={block_to_tray:.3f} z={block_z_to_tray:.3f}"
                 )
                 last_print = loop_start
 
@@ -297,8 +399,11 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
             elif phase == "tray_push" and tray_goal_error < 0.055:
                 next_phase = "tray_retreat"
                 # Place relative to the tray's actual post-push pose.
-                place_above = tray_now + np.array([0.0, 0.0, 0.17])
-                place_down = tray_now + np.array([0.0, 0.0, 0.075])
+                place_down = tray_now + np.array([0.0, 0.0, 0.060])
+                place_above = place_down + np.array(
+                    [0.0, 0.0, waypoint_clearance]
+                )
+                drop_center = tray_now.copy()
             elif phase == "tray_retreat" and left_error < 0.065:
                 next_phase = "right_above"
             elif (
@@ -322,16 +427,81 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
                 and abs(block_z_offset - 0.005) < 0.020
             ):
                 next_phase = "close"
-            elif phase == "close" and phase_elapsed > 1.5:
-                next_phase = "lift"
-            elif phase == "lift" and block_lift >= 0.080:
-                next_phase = "place_above"
-            elif phase == "place_above" and block_to_tray < 0.070:
-                next_phase = "place_down"
+            elif phase == "close" and phase_elapsed > close_hold_seconds:
+                right_mid_to_block = right_mid - block_now
+                place_above_settle_start = None
+                next_phase = "pick_lift"
+            elif (
+                phase == "pick_lift"
+                and (
+                    block_lift >= waypoint_clearance * 0.80
+                    or (
+                        phase_elapsed > 1.3
+                        and block_lift >= waypoint_clearance * 0.45
+                    )
+                    or (phase_elapsed > 1.7 and block_lift >= 0.045)
+                )
+            ):
+                drop_center = tray_now.copy()
+                place_down = drop_center + np.array([0.0, 0.0, 0.060])
+                place_above = place_down + np.array(
+                    [0.0, 0.0, waypoint_clearance]
+                )
+                right_mid_to_block = right_mid - block_now
+                carry_start_xy = right_mid[:2].copy()
+                carry_goal = place_above + right_mid_to_block
+                carry_z = max(
+                    right_mid[2],
+                    carry_goal[2],
+                    tray_now[2] + 0.185,
+                )
+                carry_progress = 0.0
+                place_above_settle_start = None
+                next_phase = "carry_horizontal"
+            elif phase == "carry_horizontal":
+                carry_done = (
+                    carry_progress >= 1.0
+                    and block_to_tray < 0.045
+                    and block_z_to_tray > 0.105
+                    and (right_error < 0.090 or phase_elapsed > 1.6)
+                )
+                carry_fallback = (
+                    phase_elapsed > 2.5
+                    and block_to_tray < 0.065
+                    and block_z_to_tray > 0.095
+                )
+                if carry_done or carry_fallback:
+                    right_mid_to_block = right_mid - block_now
+                    place_above_settle_start = None
+                    next_phase = "place_above"
+            elif phase == "place_above":
+                place_above_ready = (
+                    block_to_tray < 0.035
+                    and right_error < 0.080
+                    and block_z_to_tray > 0.105
+                )
+                place_above_fallback = (
+                    phase_elapsed > 2.5
+                    and block_to_tray < 0.055
+                    and block_z_to_tray > 0.095
+                )
+                if place_above_ready or place_above_fallback:
+                    if place_above_settle_start is None:
+                        place_above_settle_start = env.data.time
+                    elif (
+                        env.data.time - place_above_settle_start
+                        >= place_above_settle_seconds
+                    ):
+                        drop_center = tray_now.copy()
+                        right_mid_to_block = right_mid - block_now
+                        next_phase = "place_down"
+                else:
+                    place_above_settle_start = None
             elif (
                 phase == "place_down"
-                and block_to_tray < 0.070
-                and right_error < 0.055
+                and block_to_tray < 0.080
+                and (block_z_to_tray < 0.090 or phase_elapsed > 2.5)
+                and (right_error < 0.080 or phase_elapsed > 2.5)
             ):
                 next_phase = "release"
             elif (
