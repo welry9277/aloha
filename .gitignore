@@ -4,10 +4,16 @@ camera_outputs/
 demonstrations*/
 results/
 
-# External dependency
-mujoco_menagerie/
+# Track only the ALOHA model used by this project
+mujoco_menagerie/*
+!mujoco_menagerie/aloha/
+!mujoco_menagerie/aloha/**
 
 # Local environment
 .venv/
 __pycache__/
 *.py[cod]
+checkpoints/
+
+# Temporary upstream checkout; patched vendored source is official_act/
+third_party/act/
