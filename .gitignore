@@ -22,5 +22,5 @@ checkpoints/
 # Training and collection outputs
 *.log
 logs/
-models/
+/models/
 
