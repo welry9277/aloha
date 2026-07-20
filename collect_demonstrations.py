@@ -3,11 +3,16 @@ from pathlib import Path
 
 from expert_primitives import run_primitive_episode
 from expert_tray_push_pick_place import run_episode as run_full_episode
+from scripted_unseen_rl_test import run_episode as run_unseen_rl_episode
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task", choices=("full", "tray_push", "pick_place"), default="full")
+    parser.add_argument(
+        "--task",
+        choices=("full", "seen_lr", "unseen_rl", "tray_push", "pick_place"),
+        default="full",
+    )
     parser.add_argument("--arm", choices=("left", "right"))
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--output", type=Path, default=Path("demonstrations"))
@@ -18,9 +23,10 @@ def main():
     parser.add_argument("--keep-failures", action="store_true")
     args = parser.parse_args()
 
-    if args.task != "full" and args.arm is None:
+    primitive_task = args.task in {"tray_push", "pick_place"}
+    if primitive_task and args.arm is None:
         parser.error("--arm is required for tray_push and pick_place")
-    if args.task == "full" and args.arm is not None:
+    if not primitive_task and args.arm is not None:
         parser.error("--arm is only valid for tray_push and pick_place")
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -31,15 +37,24 @@ def main():
     while successes < args.episodes and attempts < max_attempts:
         seed = args.seed + attempts
         path = args.output / f"episode_{successes:04d}.npz"
+        task_label = args.task
+        if primitive_task:
+            task_label = f"{args.arm}_{args.task}"
         print(
-            f"\n=== attempt {attempts + 1}/{max_attempts}, "
-            f"success {successes}/{args.episodes}, seed={seed}, "
-            f"task={args.task}, arm={args.arm} ===",
+            f"\n=== task={task_label}, attempt {attempts + 1}/{max_attempts}, "
+            f"success {successes}/{args.episodes}, seed={seed} ===",
             flush=True,
         )
 
-        if args.task == "full":
+        if args.task in {"full", "seen_lr"}:
             success = run_full_episode(
+                record_path=path,
+                show_viewer=args.viewer,
+                seed=seed,
+                randomize=args.randomize,
+            )
+        elif args.task == "unseen_rl":
+            success = run_unseen_rl_episode(
                 record_path=path,
                 show_viewer=args.viewer,
                 seed=seed,
