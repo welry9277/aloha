@@ -38,7 +38,7 @@ def move_batch(batch, device):
 def run_epoch(model, loader, device, kl_weight, optimizer=None, max_batches=None):
     training = optimizer is not None
     model.train(training)
-    totals = {"loss": 0.0, "l1": 0.0, "kl": 0.0}
+    totals = {"loss": 0.0, "l1": 0.0, "kl": 0.0, "prior_l1": 0.0}
     batches = 0
 
     context = torch.enable_grad() if training else torch.no_grad()
@@ -55,6 +55,19 @@ def run_epoch(model, loader, device, kl_weight, optimizer=None, max_batches=None
             loss = loss_dict["loss"]
             l1 = loss_dict["l1"]
             kl = loss_dict["kl"]
+            prior_l1 = torch.zeros((), device=device)
+            if not training:
+                prior_prediction = model(
+                    batch["state"],
+                    batch["images"],
+                    batch["instruction"],
+                )
+                valid = (~batch["is_pad"]).unsqueeze(-1).expand_as(
+                    batch["actions"]
+                )
+                prior_l1 = torch.abs(
+                    prior_prediction - batch["actions"]
+                )[valid].mean()
             if training:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -63,6 +76,7 @@ def run_epoch(model, loader, device, kl_weight, optimizer=None, max_batches=None
             totals["loss"] += float(loss.detach())
             totals["l1"] += float(l1.detach())
             totals["kl"] += float(kl.detach())
+            totals["prior_l1"] += float(prior_l1.detach())
             batches += 1
             if max_batches is not None and batches >= max_batches:
                 break
@@ -91,6 +105,11 @@ def main():
     parser.add_argument("--dim-feedforward", type=int, default=3200)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--max-batches-per-epoch", type=int)
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        help="Resume model and optimizer state; --epochs is the final epoch.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
@@ -153,11 +172,40 @@ def main():
     )
     optimizer = model.configure_optimizers()
 
+    start_epoch = 1
+    best_val = float("inf")
+    best_prior = float("inf")
+    if args.resume is not None:
+        resume_path = args.resume.resolve()
+        resume_checkpoint = torch.load(
+            resume_path, map_location=device, weights_only=False
+        )
+        if resume_checkpoint["model_config"]["num_queries"] != args.chunk_size:
+            raise ValueError("Resume checkpoint chunk size does not match --chunk-size")
+        model.load_state_dict(resume_checkpoint["model"], strict=True)
+        optimizer.load_state_dict(resume_checkpoint["optimizer"])
+        start_epoch = int(resume_checkpoint["epoch"]) + 1
+        best_val = float(
+            resume_checkpoint.get(
+                "best_val", resume_checkpoint["val_metrics"]["loss"]
+            )
+        )
+        best_prior = float(resume_checkpoint.get("best_prior", float("inf")))
+        print(
+            f"resumed={resume_path}, start_epoch={start_epoch}, "
+            f"previous_val={resume_checkpoint['val_metrics']['loss']:.5f}",
+            flush=True,
+        )
+
     manifest = {
         "train": [str(path) for path in train_paths],
         "val": [str(path) for path in val_paths],
         "instructions": sorted(set(train_dataset.instructions)),
-        "args": vars(args) | {"output": str(args.output)},
+        "args": vars(args)
+        | {
+            "output": str(args.output),
+            "resume": str(args.resume) if args.resume is not None else None,
+        },
         "model_config": policy_config,
     }
     (args.output / "manifest.json").write_text(
@@ -168,8 +216,12 @@ def main():
         f"device={device}, train_episodes={len(train_paths)}, "
         f"train_steps={len(train_dataset)}, val_episodes={len(val_paths)}"
     )
-    best_val = float("inf")
-    for epoch in range(1, args.epochs + 1):
+    if start_epoch > args.epochs:
+        raise ValueError(
+            f"Checkpoint is already at epoch {start_epoch - 1}; "
+            f"set --epochs to at least {start_epoch}."
+        )
+    for epoch in range(start_epoch, args.epochs + 1):
         train_metrics = run_epoch(
             model,
             train_loader,
@@ -190,7 +242,8 @@ def main():
             f"train_loss={train_metrics['loss']:.5f} "
             f"train_l1={train_metrics['l1']:.5f} "
             f"val_loss={val_metrics['loss']:.5f} "
-            f"val_l1={val_metrics['l1']:.5f}",
+            f"val_l1={val_metrics['l1']:.5f} "
+            f"val_prior_l1={val_metrics['prior_l1']:.5f}",
             flush=True,
         )
         checkpoint = {
@@ -199,11 +252,16 @@ def main():
             "epoch": epoch,
             "model_config": policy_config,
             "val_metrics": val_metrics,
+            "best_val": min(best_val, val_metrics["loss"]),
+            "best_prior": min(best_prior, val_metrics["prior_l1"]),
         }
         torch.save(checkpoint, args.output / "latest.pt")
         if val_metrics["loss"] < best_val:
             best_val = val_metrics["loss"]
             torch.save(checkpoint, args.output / "best.pt")
+        if val_metrics["prior_l1"] < best_prior:
+            best_prior = val_metrics["prior_l1"]
+            torch.save(checkpoint, args.output / "best_prior.pt")
 
 
 if __name__ == "__main__":

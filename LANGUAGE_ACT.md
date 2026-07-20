@@ -37,6 +37,33 @@ The run writes `normalization_stats.json`, `manifest.json`, `latest.pt`, and
 `best.pt`. The manifest records the exact episode list and canonical
 instructions.
 
+## 3. Closed-loop overfit rollout
+
+Restore one of the five training demonstrations exactly, query ACT every full
+chunk, and execute each predicted 10 Hz action target in MuJoCo:
+
+```bash
+./.venv/Scripts/python.exe -u evaluate_language_act.py --checkpoint checkpoints/language_act_overfit5/best.pt --episode demonstrations_lr_train_resume1/episode_0000.npz
+```
+
+Use `--no-viewer` for a fast headless check. This is a memorization test, not a
+generalization measurement. A later evaluation should use held-out episode
+initial conditions and report success over multiple seeds.
+
+## 4. Render the ACT architecture
+
+After installing the Graphviz application and the Python dependencies, render
+the tensor-only ACT core as an SVG:
+
+```bash
+./.venv/Scripts/python.exe visualize_act_model.py
+```
+
+The default output is `model_visualizations/language_act_core.svg`. DistilBERT
+is collapsed into a `(1, hidden_dim)` language-embedding input so the ACT graph
+remains readable. Use `--expand-nested --depth 5` only when a much larger graph
+is needed for debugging.
+
 DistilBERT is always frozen; only its projection into ACT and the original ACT
 vision/action policy are trainable.
 

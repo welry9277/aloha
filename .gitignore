@@ -3,6 +3,7 @@
 camera_outputs/
 demonstrations*/
 results/
+datasets/
 
 # Track only the ALOHA model used by this project
 mujoco_menagerie/*

@@ -13,6 +13,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("episode", type=Path)
     parser.add_argument("--no-viewer", action="store_true")
+    parser.add_argument(
+        "--sampled-actions",
+        action="store_true",
+        help=(
+            "Replay the 10 Hz sampled actions used to train ACT, holding each "
+            "action for image_stride MuJoCo steps. By default, replay the "
+            "original full-rate expert actions."
+        ),
+    )
     args = parser.parse_args()
 
     episode = np.load(args.episode, allow_pickle=False)
@@ -30,7 +39,19 @@ def main():
     )
     mujoco.mj_forward(env.model, env.data)
 
-    actions = episode["full_actions"]
+    if args.sampled_actions:
+        actions = episode["actions"]
+        action_repeat = int(np.asarray(episode["image_stride"]).item())
+        mode = "sampled"
+    else:
+        actions = episode["full_actions"]
+        action_repeat = 1
+        mode = "full-rate"
+
+    print(
+        f"replay mode={mode}, actions={len(actions)}, "
+        f"action_repeat={action_repeat}"
+    )
     viewer_context = (
         mujoco.viewer.launch_passive(env.model, env.data)
         if not args.no_viewer
@@ -39,16 +60,17 @@ def main():
 
     def replay(viewer):
         for action in actions:
-            start = time.time()
-            env.data.ctrl[:] = action
-            mujoco.mj_step(env.model, env.data)
-            if viewer is not None:
-                if not viewer.is_running():
-                    break
-                viewer.sync()
-                remaining = env.model.opt.timestep - (time.time() - start)
-                if remaining > 0:
-                    time.sleep(remaining)
+            for _ in range(action_repeat):
+                start = time.time()
+                env.data.ctrl[:] = action
+                mujoco.mj_step(env.model, env.data)
+                if viewer is not None:
+                    if not viewer.is_running():
+                        return
+                    viewer.sync()
+                    remaining = env.model.opt.timestep - (time.time() - start)
+                    if remaining > 0:
+                        time.sleep(remaining)
 
     if viewer_context is None:
         replay(None)
