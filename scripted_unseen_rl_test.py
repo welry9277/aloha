@@ -35,15 +35,14 @@ def run_episode(record_path=None, show_viewer=True, seed=0, randomize=False):
     rng = np.random.default_rng(seed)
     if randomize:
         tray_y = rng.uniform(0.135, 0.165)
-        tray_start_x = rng.uniform(0.040, 0.060)
-        tray_goal_x = tray_start_x - rng.uniform(0.145, 0.165)
-        tray_start = np.array([tray_start_x, tray_y, 0.018])
-        tray_goal = np.array(
-            [tray_goal_x, tray_y, 0.018]
-        )
+        seen_tray_start_x = rng.uniform(-0.060, -0.040)
+        seen_tray_goal_x = seen_tray_start_x + rng.uniform(0.145, 0.165)
+        block_x = rng.uniform(-0.035, 0.035)
+        tray_start = np.array([-seen_tray_start_x, tray_y, 0.018])
+        tray_goal = np.array([-seen_tray_goal_x, tray_y, 0.018])
         block_start = np.array(
             [
-                rng.uniform(-0.035, 0.035),
+                -block_x,
                 rng.uniform(-0.140, -0.105),
                 0.025,
             ]
