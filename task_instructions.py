@@ -42,6 +42,10 @@ def task_from_path(path):
         if task in path_string:
             return task
 
+    # Check the held-out role composition before the seen-task fallback.
+    if "/unseen_rl/" in path_string or "unseen_rl" in path_string:
+        return "unseen_rl"
+
     if "/seen_lr/" in path_string or "demonstrations_lr" in path_string:
         return "seen_lr"
 
