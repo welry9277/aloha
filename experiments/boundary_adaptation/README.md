@@ -155,3 +155,17 @@ The decisive comparisons are:
 Improvement only on the boundary and hybrid tests supports the
 phase-boundary distribution-shift explanation. Improvement on full unseen RL
 also shows that ACT can use the added transition data to compose the roles.
+### Extend boundary validation and test splits
+
+Preserve existing files and extend both symmetric boundary tasks to 40
+validation episodes and 50 primitive-test episodes:
+
+```powershell
+.\experiments\boundary_adaptation\extend_boundary_eval_splits.ps1
+```
+
+Run it in the background with:
+
+```powershell
+.\experiments\boundary_adaptation\extend_boundary_eval_splits.ps1 -Background
+```
