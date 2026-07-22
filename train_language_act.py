@@ -2,16 +2,18 @@ import argparse
 import json
 import random
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Sampler
 
 from language_act_dataset import (
     AlohaNPZActionChunkDataset,
     compute_normalization_stats,
     discover_episode_paths,
+    group_episode_paths_by_task,
     save_normalization_stats,
 )
 ACT_ROOT = Path(__file__).parent / "third_party" / "official_act"
@@ -40,6 +42,7 @@ def run_epoch(model, loader, device, kl_weight, optimizer=None, max_batches=None
     model.train(training)
     totals = {"loss": 0.0, "l1": 0.0, "kl": 0.0, "prior_l1": 0.0}
     batches = 0
+    samples = 0
 
     context = torch.enable_grad() if training else torch.no_grad()
     with context:
@@ -73,15 +76,67 @@ def run_epoch(model, loader, device, kl_weight, optimizer=None, max_batches=None
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
-            totals["loss"] += float(loss.detach())
-            totals["l1"] += float(l1.detach())
-            totals["kl"] += float(kl.detach())
-            totals["prior_l1"] += float(prior_l1.detach())
+            batch_size = int(batch["state"].shape[0])
+            totals["loss"] += float(loss.detach()) * batch_size
+            totals["l1"] += float(l1.detach()) * batch_size
+            totals["kl"] += float(kl.detach()) * batch_size
+            totals["prior_l1"] += float(prior_l1.detach()) * batch_size
             batches += 1
+            samples += batch_size
             if max_batches is not None and batches >= max_batches:
                 break
 
-    return {key: value / max(batches, 1) for key, value in totals.items()}
+    return {key: value / max(samples, 1) for key, value in totals.items()}
+
+
+class TaskBalancedBatchSampler(Sampler):
+    """Samples every task equally inside each mini-batch."""
+
+    def __init__(self, dataset, batch_size, seed):
+        self.task_indices = defaultdict(list)
+        for index, task in enumerate(dataset.sample_tasks):
+            self.task_indices[task].append(index)
+        self.tasks = sorted(self.task_indices)
+        if not self.tasks:
+            raise ValueError("Cannot balance an empty training dataset")
+        if batch_size % len(self.tasks) != 0:
+            raise ValueError(
+                f"Balanced batch size {batch_size} must be divisible by "
+                f"the number of tasks ({len(self.tasks)}): {self.tasks}"
+            )
+        self.samples_per_task = batch_size // len(self.tasks)
+        self.num_batches = (len(dataset) + batch_size - 1) // batch_size
+        self.seed = int(seed)
+        self.epoch = 0
+
+    def __iter__(self):
+        rng = np.random.default_rng(self.seed + self.epoch)
+        self.epoch += 1
+        for _ in range(self.num_batches):
+            batch = []
+            for task in self.tasks:
+                batch.extend(
+                    rng.choice(
+                        self.task_indices[task],
+                        size=self.samples_per_task,
+                        replace=True,
+                    ).tolist()
+                )
+            rng.shuffle(batch)
+            yield batch
+
+    def __len__(self):
+        return self.num_batches
+
+
+def macro_average(metrics_by_task):
+    if not metrics_by_task:
+        raise ValueError("No validation task metrics were computed")
+    keys = next(iter(metrics_by_task.values())).keys()
+    return {
+        key: float(np.mean([metrics[key] for metrics in metrics_by_task.values()]))
+        for key in keys
+    }
 
 
 def main():
@@ -90,6 +145,13 @@ def main():
     parser.add_argument("--val-dir", action="append", default=[])
     parser.add_argument("--output", type=Path, default=Path("checkpoints/language_act"))
     parser.add_argument("--max-episodes", type=int)
+    parser.add_argument("--max-train-episodes-per-task", type=int)
+    parser.add_argument("--max-val-episodes-per-task", type=int)
+    parser.add_argument("--task-balanced-sampling", action="store_true")
+    parser.add_argument(
+        "--max-val-batches-per-task", type=int,
+        help="Optional validation cap applied independently to each task.",
+    )
     parser.add_argument("--chunk-size", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=20)
@@ -114,6 +176,10 @@ def main():
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
+    if args.max_episodes is not None and args.max_train_episodes_per_task is not None:
+        parser.error(
+            "Use either --max-episodes or --max-train-episodes-per-task, not both"
+        )
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -126,17 +192,36 @@ def main():
         device = torch.device(args.device)
     args.output.mkdir(parents=True, exist_ok=True)
 
-    train_paths = discover_episode_paths(args.train_dir, args.max_episodes)
-    val_paths = discover_episode_paths(args.val_dir) if args.val_dir else train_paths
-    stats = compute_normalization_stats(train_paths)
+    train_paths = discover_episode_paths(
+        args.train_dir,
+        max_episodes=args.max_episodes,
+        max_episodes_per_task=args.max_train_episodes_per_task,
+    )
+    val_paths = (
+        discover_episode_paths(
+            args.val_dir,
+            max_episodes_per_task=args.max_val_episodes_per_task,
+        )
+        if args.val_dir
+        else train_paths
+    )
+    stats = compute_normalization_stats(
+        train_paths, balance_tasks=args.task_balanced_sampling
+    )
     save_normalization_stats(stats, args.output / "normalization_stats.json")
 
     train_dataset = AlohaNPZActionChunkDataset(
         train_paths, args.chunk_size, stats, cache_size=min(len(train_paths), 8)
     )
-    val_dataset = AlohaNPZActionChunkDataset(
-        val_paths, args.chunk_size, stats, cache_size=min(len(val_paths), 8)
-    )
+    val_datasets = {
+        task: AlohaNPZActionChunkDataset(
+            paths,
+            args.chunk_size,
+            stats,
+            cache_size=min(len(paths), 8),
+        )
+        for task, paths in group_episode_paths_by_task(val_paths).items()
+    }
     policy_config = {
         "lr": args.learning_rate,
         "lr_backbone": args.lr_backbone,
@@ -156,25 +241,40 @@ def main():
     }
     model = ACTPolicy(policy_config).to(device)
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=device.type == "cuda",
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=device.type == "cuda",
-    )
+    if args.task_balanced_sampling:
+        train_batch_sampler = TaskBalancedBatchSampler(
+            train_dataset, args.batch_size, args.seed
+        )
+        train_loader = DataLoader(
+            train_dataset,
+            batch_sampler=train_batch_sampler,
+            num_workers=args.num_workers,
+            pin_memory=device.type == "cuda",
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=device.type == "cuda",
+        )
+    val_loaders = {
+        task: DataLoader(
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=device.type == "cuda",
+        )
+        for task, dataset in val_datasets.items()
+    }
     optimizer = model.configure_optimizers()
 
     start_epoch = 1
     best_val = float("inf")
     best_prior = float("inf")
+    best_worst_prior = float("inf")
     if args.resume is not None:
         resume_path = args.resume.resolve()
         resume_checkpoint = torch.load(
@@ -191,6 +291,9 @@ def main():
             )
         )
         best_prior = float(resume_checkpoint.get("best_prior", float("inf")))
+        best_worst_prior = float(
+            resume_checkpoint.get("best_worst_prior", float("inf"))
+        )
         print(
             f"resumed={resume_path}, start_epoch={start_epoch}, "
             f"previous_val={resume_checkpoint['val_metrics']['loss']:.5f}",
@@ -199,7 +302,11 @@ def main():
 
     manifest = {
         "train": [str(path) for path in train_paths],
-        "val": [str(path) for path in val_paths],
+        "val": {
+            task: [str(path) for path in dataset.episode_paths]
+            for task, dataset in val_datasets.items()
+        },
+        "train_task_steps": dict(Counter(train_dataset.sample_tasks)),
         "instructions": sorted(set(train_dataset.instructions)),
         "args": vars(args)
         | {
@@ -214,7 +321,13 @@ def main():
 
     print(
         f"device={device}, train_episodes={len(train_paths)}, "
-        f"train_steps={len(train_dataset)}, val_episodes={len(val_paths)}"
+        f"train_steps={len(train_dataset)}, val_episodes={len(val_paths)}, "
+        f"task_balanced_sampling={args.task_balanced_sampling}"
+    )
+    print(f"train_task_steps={dict(Counter(train_dataset.sample_tasks))}")
+    print(
+        "val_task_episodes="
+        + str({task: len(dataset.episode_paths) for task, dataset in val_datasets.items()})
     )
     if start_epoch > args.epochs:
         raise ValueError(
@@ -230,12 +343,24 @@ def main():
             optimizer=optimizer,
             max_batches=args.max_batches_per_epoch,
         )
-        val_metrics = run_epoch(
-            model,
-            val_loader,
-            device,
-            args.kl_weight,
-            max_batches=args.max_batches_per_epoch,
+        val_metrics_by_task = {
+            task: run_epoch(
+                model,
+                loader,
+                device,
+                args.kl_weight,
+                max_batches=args.max_val_batches_per_task,
+            )
+            for task, loader in val_loaders.items()
+        }
+        val_metrics = macro_average(val_metrics_by_task)
+        worst_task_prior_l1 = max(
+            metrics["prior_l1"] for metrics in val_metrics_by_task.values()
+        )
+        val_task_summary = " ".join(
+            f"val_{task}_loss={metrics['loss']:.5f} "
+            f"val_{task}_prior_l1={metrics['prior_l1']:.5f}"
+            for task, metrics in val_metrics_by_task.items()
         )
         print(
             f"epoch={epoch:04d} "
@@ -243,7 +368,9 @@ def main():
             f"train_l1={train_metrics['l1']:.5f} "
             f"val_loss={val_metrics['loss']:.5f} "
             f"val_l1={val_metrics['l1']:.5f} "
-            f"val_prior_l1={val_metrics['prior_l1']:.5f}",
+            f"val_prior_l1={val_metrics['prior_l1']:.5f} "
+            f"val_worst_task_prior_l1={worst_task_prior_l1:.5f} "
+            f"{val_task_summary}",
             flush=True,
         )
         checkpoint = {
@@ -252,8 +379,11 @@ def main():
             "epoch": epoch,
             "model_config": policy_config,
             "val_metrics": val_metrics,
+            "val_metrics_by_task": val_metrics_by_task,
+            "worst_task_prior_l1": worst_task_prior_l1,
             "best_val": min(best_val, val_metrics["loss"]),
             "best_prior": min(best_prior, val_metrics["prior_l1"]),
+            "best_worst_prior": min(best_worst_prior, worst_task_prior_l1),
         }
         torch.save(checkpoint, args.output / "latest.pt")
         if val_metrics["loss"] < best_val:
@@ -262,6 +392,9 @@ def main():
         if val_metrics["prior_l1"] < best_prior:
             best_prior = val_metrics["prior_l1"]
             torch.save(checkpoint, args.output / "best_prior.pt")
+        if worst_task_prior_l1 < best_worst_prior:
+            best_worst_prior = worst_task_prior_l1
+            torch.save(checkpoint, args.output / "best_worst_prior.pt")
 
 
 if __name__ == "__main__":

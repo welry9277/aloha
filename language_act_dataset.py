@@ -1,5 +1,5 @@
 import json
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +17,7 @@ CAMERA_KEYS = (
 REQUIRED_KEYS = CAMERA_KEYS + ("states", "actions", "success")
 
 
-def discover_episode_paths(data_dirs, max_episodes=None):
+def discover_episode_paths(data_dirs, max_episodes=None, max_episodes_per_task=None):
     paths = []
     for data_dir in data_dirs:
         root = Path(data_dir)
@@ -25,11 +25,27 @@ def discover_episode_paths(data_dirs, max_episodes=None):
             raise FileNotFoundError(f"Dataset directory does not exist: {root}")
         paths.extend(root.rglob("episode_*.npz"))
     paths = sorted({path.resolve() for path in paths})
+    if max_episodes_per_task is not None:
+        grouped = defaultdict(list)
+        for path in paths:
+            grouped[task_from_path(path)].append(path)
+        paths = sorted(
+            path
+            for task_paths in grouped.values()
+            for path in task_paths[:max_episodes_per_task]
+        )
     if max_episodes is not None:
         paths = paths[:max_episodes]
     if not paths:
         raise ValueError(f"No episode_*.npz files found in: {data_dirs}")
     return paths
+
+
+def group_episode_paths_by_task(episode_paths):
+    grouped = defaultdict(list)
+    for path in episode_paths:
+        grouped[task_from_path(path)].append(Path(path))
+    return {task: sorted(paths) for task, paths in sorted(grouped.items())}
 
 
 def inspect_episode(path):
@@ -50,13 +66,12 @@ def inspect_episode(path):
     return length
 
 
-def compute_normalization_stats(episode_paths):
+def _compute_moments(episode_paths):
     state_sum = np.zeros(14, dtype=np.float64)
     state_sq_sum = np.zeros(14, dtype=np.float64)
     action_sum = np.zeros(14, dtype=np.float64)
     action_sq_sum = np.zeros(14, dtype=np.float64)
     count = 0
-
     for path in episode_paths:
         with np.load(path, allow_pickle=False) as data:
             states = np.asarray(data["states"], dtype=np.float64)
@@ -66,17 +81,32 @@ def compute_normalization_stats(episode_paths):
         action_sum += actions.sum(axis=0)
         action_sq_sum += np.square(actions).sum(axis=0)
         count += len(states)
+    if count == 0:
+        raise ValueError("Cannot compute normalization statistics from zero steps")
+    return state_sum / count, state_sq_sum / count, action_sum / count, action_sq_sum / count, count
 
-    state_mean = state_sum / count
-    action_mean = action_sum / count
-    state_var = np.maximum(state_sq_sum / count - np.square(state_mean), 1e-8)
-    action_var = np.maximum(action_sq_sum / count - np.square(action_mean), 1e-8)
+
+def compute_normalization_stats(episode_paths, balance_tasks=False):
+    if balance_tasks:
+        grouped = group_episode_paths_by_task(episode_paths)
+        task_moments = [_compute_moments(paths) for paths in grouped.values()]
+        state_mean = np.mean([moments[0] for moments in task_moments], axis=0)
+        state_second = np.mean([moments[1] for moments in task_moments], axis=0)
+        action_mean = np.mean([moments[2] for moments in task_moments], axis=0)
+        action_second = np.mean([moments[3] for moments in task_moments], axis=0)
+        count = sum(moments[4] for moments in task_moments)
+    else:
+        state_mean, state_second, action_mean, action_second, count = _compute_moments(episode_paths)
+
+    state_var = np.maximum(state_second - np.square(state_mean), 1e-8)
+    action_var = np.maximum(action_second - np.square(action_mean), 1e-8)
     return {
         "state_mean": state_mean.astype(np.float32),
         "state_std": np.sqrt(state_var).astype(np.float32),
         "action_mean": action_mean.astype(np.float32),
         "action_std": np.sqrt(action_var).astype(np.float32),
         "num_steps": int(count),
+        "task_balanced": bool(balance_tasks),
     }
 
 
@@ -138,6 +168,10 @@ class AlohaNPZActionChunkDataset(Dataset):
         ]
         self.instructions = [instruction_from_path(path) for path in self.episode_paths]
         self.tasks = [task_from_path(path) for path in self.episode_paths]
+        self.sample_tasks = [
+            self.tasks[episode_index]
+            for episode_index, _ in self.index
+        ]
 
     def __len__(self):
         return len(self.index)
