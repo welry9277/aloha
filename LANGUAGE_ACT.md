@@ -88,6 +88,20 @@ Pass `seen`, `composition`, or `composition-worst` to evaluate one checkpoint.
 PowerShell users can use `evaluation/run_act_evaluations.ps1` with the matching
 `-Model` value.
 
+## 6. Hybrid phase-transition diagnostics
+
+Run the expert/ACT handoff tests on the held-out `unseen_rl` initial states:
+
+```bash
+bash evaluation/evaluate_hybrid_transition.sh composition-worst
+```
+
+The launcher runs an expert-to-expert oracle first, followed by expert right
+tray push to ACT left pick-and-place and ACT right tray push to expert left
+pick-and-place.  The same MuJoCo environment is preserved across each handoff.
+Use `LIMIT=2` for a quick smoke test and inspect each mode's `summary.json`
+under `results/hybrid_transition/`.
+
 ## Important boundaries
 
 - `unseen_rl` is evaluation-only and must never be included in a train folder.
