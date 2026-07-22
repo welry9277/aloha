@@ -21,7 +21,7 @@ $CheckpointFiles = @{
     "latest" = "latest.pt"
 }
 $CheckpointPath = Join-Path $ProjectRoot (
-    "checkpoints\language_act_boundary_replacement_250\" +
+    "checkpoints\language_act_symmetric_boundary_250\" +
     $CheckpointFiles[$Checkpoint]
 )
 if (-not (Test-Path $CheckpointPath)) {
@@ -30,7 +30,7 @@ if (-not (Test-Path $CheckpointPath)) {
 
 $DataRoot = Join-Path $ProjectRoot "datasets\aloha2-role-composition\raw_npz"
 $ResultRoot = Join-Path $ProjectRoot (
-    "results\act_boundary_replacement\" + $Checkpoint.Replace("-", "_")
+    "results\act_symmetric_boundary\" + $Checkpoint.Replace("-", "_")
 )
 $LimitArgs = @()
 if ($Limit -gt 0) {
@@ -45,6 +45,7 @@ $TaskDirectories = [ordered]@{
     "left_pick_place" = Join-Path $DataRoot "primitive_test\left_pick_place"
     "right_pick_place" = Join-Path $DataRoot "primitive_test\right_pick_place"
     "left_pick_place_after_right_push" = Join-Path $DataRoot "primitive_test\left_pick_place_after_right_push"
+    "right_pick_place_after_left_push" = Join-Path $DataRoot "primitive_test\right_pick_place_after_left_push"
 }
 
 switch ($Suite) {
@@ -57,7 +58,12 @@ switch ($Suite) {
             "right_pick_place"
         )
     }
-    "boundary" { $Tasks = @("left_pick_place_after_right_push") }
+    "boundary" {
+        $Tasks = @(
+            "left_pick_place_after_right_push",
+            "right_pick_place_after_left_push"
+        )
+    }
     "hybrid" { $Tasks = @() }
     default { $Tasks = @($TaskDirectories.Keys) }
 }
@@ -112,4 +118,4 @@ finally {
 }
 
 Write-Host ""
-Write-Host "Boundary ACT evaluation completed: $ResultRoot"
+Write-Host "Symmetric-boundary ACT evaluation completed: $ResultRoot"

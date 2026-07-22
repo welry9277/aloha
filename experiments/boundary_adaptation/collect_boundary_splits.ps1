@@ -19,6 +19,17 @@ if ($Resume) {
     $ResumeArg = @("--resume")
 }
 
+$Tasks = @(
+    @{
+        Name = "left_pick_place_after_right_push"
+        SeedOffset = 0
+    },
+    @{
+        Name = "right_pick_place_after_left_push"
+        SeedOffset = 30000
+    }
+)
+
 $Splits = @(
     @{
         Name = "train"
@@ -42,20 +53,30 @@ $Splits = @(
 
 Push-Location $ProjectRoot
 try {
-    foreach ($Split in $Splits) {
-        $Output = Join-Path $DataRoot (
-            "$($Split.Name)\left_pick_place_after_right_push"
-        )
-        Write-Host ""
-        Write-Host "=== collecting boundary $($Split.Name): $($Split.Episodes) ==="
-        & $Python -u $Collector `
-            --episodes $Split.Episodes `
-            --output $Output `
-            --seed $Split.Seed `
-            --max-attempts $Split.Attempts `
-            @ResumeArg
-        if ($LASTEXITCODE -ne 0) {
-            throw "Boundary collection failed for split=$($Split.Name)"
+    foreach ($Task in $Tasks) {
+        foreach ($Split in $Splits) {
+            $Output = Join-Path $DataRoot (
+                "$($Split.Name)\$($Task.Name)"
+            )
+            $TaskSeed = $Split.Seed + $Task.SeedOffset
+            Write-Host ""
+            Write-Host (
+                "=== collecting $($Task.Name) $($Split.Name): " +
+                "$($Split.Episodes) ==="
+            )
+            & $Python -u $Collector `
+                --task $Task.Name `
+                --episodes $Split.Episodes `
+                --output $Output `
+                --seed $TaskSeed `
+                --max-attempts $Split.Attempts `
+                @ResumeArg
+            if ($LASTEXITCODE -ne 0) {
+                throw (
+                    "Boundary collection failed for task=$($Task.Name), " +
+                    "split=$($Split.Name)"
+                )
+            }
         }
     }
 }
@@ -64,4 +85,4 @@ finally {
 }
 
 Write-Host ""
-Write-Host "Boundary train/val/test collection completed."
+Write-Host "Symmetric boundary train/val/test collection completed."

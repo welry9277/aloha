@@ -21,6 +21,10 @@ TASK_INSTRUCTIONS = {
         "Use the right arm to pick up the red block and place it "
         "inside the blue tray."
     ),
+    "right_pick_place_after_left_push": (
+        "Use the right arm to pick up the red block and place it "
+        "inside the blue tray."
+    ),
     "seen_lr": (
         "First, use the left arm to push the blue tray to the green target. "
         "Then, use the right arm to pick up the red block and place it "
@@ -39,6 +43,8 @@ def task_from_path(path):
 
     if "left_pick_place_after_right_push" in path_string:
         return "left_pick_place_after_right_push"
+    if "right_pick_place_after_left_push" in path_string:
+        return "right_pick_place_after_left_push"
 
     for task in (
         "left_tray_push",

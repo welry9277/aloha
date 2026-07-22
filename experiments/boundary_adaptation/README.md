@@ -3,21 +3,26 @@
 This experiment tests whether ACT's unseen-role failure comes from the state
 distribution at the transition between the two primitives.
 
-The added task is `left_pick_place_after_right_push`:
+The two boundary tasks are:
 
-1. A scripted expert completes `right_tray_push` and retreats.
-2. Recording starts at that post-push boundary state.
-3. The scripted expert completes `left_pick_place`.
+1. `left_pick_place_after_right_push`
+   - scripted Right tray push and retreat
+   - start recording
+   - scripted Left pick-and-place
+2. `right_pick_place_after_left_push`
+   - scripted Left tray push and retreat
+   - start recording
+   - scripted Right pick-and-place
 
-The first primitive is deliberately not recorded. Therefore the saved policy
-target is still only Left pick-and-place, but its initial state matches the
-state encountered after Right tray push.
+The push primitive is deliberately not recorded. Therefore each saved policy
+target contains only PnP actions while its initial state matches the phase
+boundary produced by the opposite arm's push.
 
 ## Files
 
 - `collect_boundary_dataset.py`: generates one split of boundary-state NPZs.
 - `collect_boundary_splits.ps1`: generates train/val/test splits.
-- `train_boundary_act.ps1`: trains the five-task boundary-replacement model.
+- `train_boundary_act.ps1`: trains the symmetric five-task boundary model.
 - `evaluate_boundary_act.ps1`: runs main, primitive, boundary, and hybrid tests.
 
 Run all PowerShell commands from the repository root on the Windows GPU host.
@@ -45,14 +50,15 @@ If the split directories are empty, collect the final dataset directly:
 .\experiments\boundary_adaptation\collect_boundary_splits.ps1
 ```
 
-Final expected counts are:
+Final expected counts for each of the two boundary tasks are:
 
 - train: 50 successful episodes
 - val: 10 successful episodes
 - primitive test: 20 successful episodes
 
-Only successful Right-push -> Left-PnP trajectories are retained. `--episodes`
-means the desired total file count when resuming, not the number to append.
+Only trajectories for which both push and PnP succeed are retained.
+`--episodes` means the desired total file count when resuming, not the number
+to append.
 
 ## 2. Train ACT
 
@@ -70,15 +76,14 @@ background:
 The command prints the background process ID. Follow its training log with:
 
 ```powershell
-Get-Content .\logs\language_act_boundary_replacement_250.log -Wait
+Get-Content .\logs\language_act_symmetric_boundary_250.log -Wait
 ```
 
 The fresh model uses five tasks, with 50 train and 10 validation episodes per
-task. It replaces ordinary `left_pick_place` with
-`left_pick_place_after_right_push`; it does not add both datasets. This keeps
-the comparison against the original composition model fixed at 250 training
-episodes. Task-balanced sampling and batch size 10 place two samples from
-every task in each balanced batch.
+task. It replaces both ordinary PnP datasets with their post-opposite-push
+boundary versions. This keeps the comparison against the original composition
+model fixed at 250 training episodes. Task-balanced sampling and batch size 10
+place two samples from every task in each balanced batch.
 
 The five training tasks are:
 
@@ -86,14 +91,14 @@ The five training tasks are:
 seen_lr
 left_tray_push
 right_tray_push
-right_pick_place
 left_pick_place_after_right_push
+right_pick_place_after_left_push
 ```
 
 Checkpoints are written to:
 
 ```text
-checkpoints/language_act_boundary_replacement_250
+checkpoints/language_act_symmetric_boundary_250
 ```
 
 Do not resume a five-task checkpoint: the task mixture and normalization
@@ -122,12 +127,12 @@ Individual suites can be selected with `main`, `primitives`, `boundary`, or
 Results are saved under:
 
 ```text
-results/act_boundary_replacement/<checkpoint>/
+results/act_symmetric_boundary/<checkpoint>/
 ```
 
 The decisive comparisons are:
 
-- boundary Left PnP versus held-out ordinary Left PnP
+- each boundary PnP versus its held-out ordinary PnP
 - unseen RL before versus after boundary-state training
 - Expert Right push -> ACT Left PnP in the hybrid suite
 

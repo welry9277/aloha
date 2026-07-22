@@ -19,10 +19,10 @@ if ($Background) {
     $LogRoot = Join-Path $ProjectRoot "logs"
     New-Item -ItemType Directory -Force $LogRoot | Out-Null
     $LauncherOut = Join-Path $LogRoot (
-        "language_act_boundary_replacement_250.launcher.out.log"
+        "language_act_symmetric_boundary_250.launcher.out.log"
     )
     $LauncherErr = Join-Path $LogRoot (
-        "language_act_boundary_replacement_250.launcher.err.log"
+        "language_act_symmetric_boundary_250.launcher.err.log"
     )
     $ChildArguments = @(
         "-NoProfile",
@@ -41,9 +41,9 @@ if ($Background) {
         -RedirectStandardError $LauncherErr `
         -WindowStyle Hidden `
         -PassThru
-    Write-Host "Boundary ACT training started in background."
+    Write-Host "Symmetric-boundary ACT training started in background."
     Write-Host "PID=$($Process.Id)"
-    Write-Host "Training log: logs\language_act_boundary_replacement_250.log"
+    Write-Host "Training log: logs\language_act_symmetric_boundary_250.log"
     Write-Host "Launcher error log: $LauncherErr"
     exit 0
 }
@@ -53,8 +53,8 @@ $TrainTasks = @(
     "seen_lr",
     "left_tray_push",
     "right_tray_push",
-    "right_pick_place",
-    "left_pick_place_after_right_push"
+    "left_pick_place_after_right_push",
+    "right_pick_place_after_left_push"
 )
 $ValTasks = $TrainTasks
 
@@ -74,8 +74,8 @@ foreach ($Task in $ValTasks) {
     $Arguments += @("--val-dir", $Directory)
 }
 
-$Output = Join-Path $ProjectRoot "checkpoints\language_act_boundary_replacement_250"
-$Log = Join-Path $ProjectRoot "logs\language_act_boundary_replacement_250.log"
+$Output = Join-Path $ProjectRoot "checkpoints\language_act_symmetric_boundary_250"
+$Log = Join-Path $ProjectRoot "logs\language_act_symmetric_boundary_250.log"
 New-Item -ItemType Directory -Force (Split-Path $Log) | Out-Null
 
 $Arguments += @(
@@ -99,7 +99,7 @@ try {
     & $Python @Arguments 2>&1 | Tee-Object -FilePath $Log
     $PythonExitCode = $LASTEXITCODE
     if ($PythonExitCode -ne 0) {
-        throw "Boundary ACT training failed with exit code $PythonExitCode"
+        throw "Symmetric-boundary ACT training failed with exit code $PythonExitCode"
     }
 }
 finally {

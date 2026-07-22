@@ -1,8 +1,7 @@
-"""Collect Left PnP demonstrations from post-Right-push boundary states.
+"""Collect PnP demonstrations from post-opposite-arm-push boundary states.
 
-The scripted right tray push is executed but not recorded.  Recording starts
-only after the push and retreat have completed, so every saved NPZ is a Left
-pick-and-place episode whose initial simulator state is the phase boundary.
+The scripted tray push is executed but not recorded. Recording starts only
+after push and retreat, so each saved NPZ begins at a real phase boundary.
 """
 
 import argparse
@@ -23,22 +22,34 @@ from evaluation.evaluate_hybrid_transition import scripted_primitive, site_id
 from evaluation.evaluate_language_act_suite import geom_labels
 
 
-TASK_NAME = "left_pick_place_after_right_push"
+TASK_SPECS = {
+    "left_pick_place_after_right_push": {
+        "push_arm": "right",
+        "pick_place_arm": "left",
+    },
+    "right_pick_place_after_left_push": {
+        "push_arm": "left",
+        "pick_place_arm": "right",
+    },
+}
 
 
-def setup_unseen_scene(env, seed):
-    """Match the randomized scene distribution used by the unseen RL expert."""
+def setup_role_scene(env, seed, push_arm):
+    """Match the randomized seen or unseen full-task scene distribution."""
     rng = np.random.default_rng(seed)
     tray_y = rng.uniform(0.135, 0.165)
-    mirrored_start_x = rng.uniform(-0.060, -0.040)
-    mirrored_goal_x = mirrored_start_x + rng.uniform(0.145, 0.165)
+    seen_start_x = rng.uniform(-0.060, -0.040)
+    seen_goal_x = seen_start_x + rng.uniform(0.145, 0.165)
     block_x = rng.uniform(-0.035, 0.035)
 
-    tray_start = np.array([-mirrored_start_x, tray_y, 0.018])
-    tray_goal = np.array([-mirrored_goal_x, tray_y, 0.018])
-    block_start = np.array(
-        [-block_x, rng.uniform(-0.140, -0.105), 0.025]
-    )
+    mirror = 1.0 if push_arm == "left" else -1.0
+    tray_start = np.array([mirror * seen_start_x, tray_y, 0.018])
+    tray_goal = np.array([mirror * seen_goal_x, tray_y, 0.018])
+    block_start = np.array([
+        mirror * block_x,
+        rng.uniform(-0.140, -0.105),
+        0.025,
+    ])
 
     env.reset(randomize=False)
     env._set_freejoint_pose(env.tray_joint, tray_start)
@@ -53,21 +64,24 @@ def setup_unseen_scene(env, seed):
     return tray_goal
 
 
-def collect_attempt(path, seed):
+def collect_attempt(path, seed, task_name):
+    spec = TASK_SPECS[task_name]
+    push_arm = spec["push_arm"]
+    pick_place_arm = spec["pick_place_arm"]
     env = AlohaTaskEnvironment(seed=seed)
-    tray_goal = setup_unseen_scene(env, seed)
+    tray_goal = setup_role_scene(env, seed, push_arm)
     labels = geom_labels(env.model)
 
     push = scripted_primitive(
         env,
         task="tray_push",
-        arm="right",
+        arm=push_arm,
         tray_goal=tray_goal,
         labels=labels,
     )
     if not push["success"]:
         print(
-            f"discarding seed={seed}: right push failed "
+            f"discarding seed={seed}: {push_arm} push failed "
             f"(tray_error={push['tray_error']:.4f})",
             flush=True,
         )
@@ -77,14 +91,14 @@ def collect_attempt(path, seed):
         env.model,
         env.data,
         path,
-        TASK_INSTRUCTIONS[TASK_NAME],
+        TASK_INSTRUCTIONS[task_name],
         tray_goal,
     )
     try:
         pick_place = scripted_primitive(
             env,
             task="pick_place",
-            arm="left",
+            arm=pick_place_arm,
             tray_goal=tray_goal,
             labels=labels,
             recorder=recorder,
@@ -96,7 +110,8 @@ def collect_attempt(path, seed):
         raise
 
     print(
-        f"seed={seed}: push=True left_pnp={pick_place['success']} "
+        f"seed={seed}: {push_arm}_push=True "
+        f"{pick_place_arm}_pnp={pick_place['success']} "
         f"tray_ok={pick_place['tray_ok']} success={success}",
         flush=True,
     )
@@ -105,8 +120,9 @@ def collect_attempt(path, seed):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Collect post-Right-push Left PnP demonstrations"
+        description="Collect PnP demonstrations from post-push boundaries"
     )
+    parser.add_argument("--task", choices=tuple(TASK_SPECS), required=True)
     parser.add_argument("--episodes", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=40000)
@@ -138,7 +154,7 @@ def main():
             f"success {successes}/{args.episodes}, seed={seed} ===",
             flush=True,
         )
-        success = collect_attempt(path, seed)
+        success = collect_attempt(path, seed, args.task)
         attempts += 1
         if success:
             successes += 1
