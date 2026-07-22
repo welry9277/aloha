@@ -60,6 +60,19 @@ means the desired total file count when resuming, not the number to append.
 .\experiments\boundary_adaptation\train_boundary_act.ps1
 ```
 
+To keep training alive after closing the terminal, launch it in the
+background:
+
+```powershell
+.\experiments\boundary_adaptation\train_boundary_act.ps1 -Background
+```
+
+The command prints the background process ID. Follow its training log with:
+
+```powershell
+Get-Content .\logs\language_act_boundary_replacement_250.log -Wait
+```
+
 The fresh model uses five tasks, with 50 train and 10 validation episodes per
 task. It replaces ordinary `left_pick_place` with
 `left_pick_place_after_right_push`; it does not add both datasets. This keeps

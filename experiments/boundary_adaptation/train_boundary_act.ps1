@@ -2,14 +2,50 @@ param(
     [string]$Device = "cuda",
     [int]$Epochs = 100,
     [int]$NumWorkers = 2,
-    [int]$Seed = 0
+    [int]$Seed = 0,
+    [switch]$Background
 )
 
-$ErrorActionPreference = "Stop"
+# Native Python libraries commonly write harmless warnings to stderr.
+# Keep those warnings visible and decide success from Python's exit code.
+$ErrorActionPreference = "Continue"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
     throw "Python environment not found: $Python"
+}
+
+if ($Background) {
+    $LogRoot = Join-Path $ProjectRoot "logs"
+    New-Item -ItemType Directory -Force $LogRoot | Out-Null
+    $LauncherOut = Join-Path $LogRoot (
+        "language_act_boundary_replacement_250.launcher.out.log"
+    )
+    $LauncherErr = Join-Path $LogRoot (
+        "language_act_boundary_replacement_250.launcher.err.log"
+    )
+    $ChildArguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $PSCommandPath,
+        "-Device", $Device,
+        "-Epochs", "$Epochs",
+        "-NumWorkers", "$NumWorkers",
+        "-Seed", "$Seed"
+    )
+    $Process = Start-Process `
+        -FilePath "powershell.exe" `
+        -ArgumentList $ChildArguments `
+        -WorkingDirectory $ProjectRoot `
+        -RedirectStandardOutput $LauncherOut `
+        -RedirectStandardError $LauncherErr `
+        -WindowStyle Hidden `
+        -PassThru
+    Write-Host "Boundary ACT training started in background."
+    Write-Host "PID=$($Process.Id)"
+    Write-Host "Training log: logs\language_act_boundary_replacement_250.log"
+    Write-Host "Launcher error log: $LauncherErr"
+    exit 0
 }
 
 $DataRoot = Join-Path $ProjectRoot "datasets\aloha2-role-composition\raw_npz"
@@ -61,8 +97,9 @@ $Arguments += @(
 Push-Location $ProjectRoot
 try {
     & $Python @Arguments 2>&1 | Tee-Object -FilePath $Log
-    if ($LASTEXITCODE -ne 0) {
-        throw "Boundary ACT training failed with exit code $LASTEXITCODE"
+    $PythonExitCode = $LASTEXITCODE
+    if ($PythonExitCode -ne 0) {
+        throw "Boundary ACT training failed with exit code $PythonExitCode"
     }
 }
 finally {
