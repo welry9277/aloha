@@ -1,9 +1,9 @@
 import argparse
 from pathlib import Path
 
-from expert_primitives import run_primitive_episode
-from expert_tray_push_pick_place import run_episode as run_full_episode
-from scripted_unseen_rl_test import run_episode as run_unseen_rl_episode
+from experts.primitives import run_primitive_episode
+from experts.tray_push_pick_place import run_episode as run_full_episode
+from experts.unseen_rl import run_episode as run_unseen_rl_episode
 
 
 def main():
