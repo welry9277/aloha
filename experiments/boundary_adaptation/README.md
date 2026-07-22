@@ -60,6 +60,22 @@ Only trajectories for which both push and PnP succeed are retained.
 `--episodes` means the desired total file count when resuming, not the number
 to append.
 
+To extend only the two training splits from 50 to 200 episodes, use the
+dedicated script. It uses fresh seed ranges and preserves existing files:
+
+```powershell
+.\experiments\boundary_adaptation\extend_boundary_train_to_200.ps1
+```
+
+For a background run:
+
+```powershell
+.\experiments\boundary_adaptation\extend_boundary_train_to_200.ps1 -Background
+```
+
+With exactly 50 existing files, this adds 150 files named
+`episode_0050.npz` through `episode_0199.npz` for each boundary direction.
+
 ## 2. Train ACT
 
 ```powershell

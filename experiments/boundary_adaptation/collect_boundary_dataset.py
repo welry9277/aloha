@@ -143,12 +143,18 @@ def main():
             "use --resume or choose an empty output directory"
         )
     max_attempts = args.max_attempts or args.episodes * 3
-    successes = len(existing)
+    starting_successes = len(existing)
+    successes = starting_successes
+    next_episode_index = (
+        max(int(path.stem.rsplit("_", 1)[1]) for path in existing) + 1
+        if existing
+        else 0
+    )
     attempts = 0
 
     while successes < args.episodes and attempts < max_attempts:
         seed = args.seed + attempts
-        path = args.output / f"episode_{successes:04d}.npz"
+        path = args.output / f"episode_{next_episode_index:04d}.npz"
         print(
             f"\n=== boundary attempt {attempts + 1}/{max_attempts}, "
             f"success {successes}/{args.episodes}, seed={seed} ===",
@@ -158,6 +164,7 @@ def main():
         attempts += 1
         if success:
             successes += 1
+            next_episode_index += 1
             print(f"kept successful episode: {path}", flush=True)
         elif path.exists():
             if args.keep_failures:
@@ -170,9 +177,11 @@ def main():
                 path.unlink()
                 print("discarded failed episode", flush=True)
 
-    rate = successes / attempts if attempts else 0.0
+    newly_collected = successes - starting_successes
+    rate = newly_collected / attempts if attempts else 0.0
     print(
-        f"attempts={attempts}, collected_successes={successes}, "
+        f"attempts={attempts}, newly_collected={newly_collected}, "
+        f"total_successes={successes}, "
         f"success_rate={rate:.1%}",
         flush=True,
     )
