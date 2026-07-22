@@ -90,7 +90,7 @@ def block_geometry_ok(tray, block):
     )
 
 
-def scripted_primitive(env, task, arm, tray_goal, labels):
+def scripted_primitive(env, task, arm, tray_goal, labels, recorder=None):
     """Run a closed-loop scripted primitive without resetting ``env``."""
     if task not in {"tray_push", "pick_place"}:
         raise ValueError(f"Unsupported scripted task: {task}")
@@ -296,6 +296,8 @@ def scripted_primitive(env, task, arm, tray_goal, labels):
             else:
                 active.set_gripper(env.data, 0.002)
 
+        if recorder is not None:
+            recorder.record_step()
         env.step()
         steps += 1
         update_contacts(env.data, labels, contacts)
