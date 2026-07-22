@@ -17,7 +17,6 @@ $TrainTasks = @(
     "seen_lr",
     "left_tray_push",
     "right_tray_push",
-    "left_pick_place",
     "right_pick_place",
     "left_pick_place_after_right_push"
 )
@@ -39,8 +38,8 @@ foreach ($Task in $ValTasks) {
     $Arguments += @("--val-dir", $Directory)
 }
 
-$Output = Join-Path $ProjectRoot "checkpoints\language_act_boundary_balanced_300"
-$Log = Join-Path $ProjectRoot "logs\language_act_boundary_balanced_300.log"
+$Output = Join-Path $ProjectRoot "checkpoints\language_act_boundary_replacement_250"
+$Log = Join-Path $ProjectRoot "logs\language_act_boundary_replacement_250.log"
 New-Item -ItemType Directory -Force (Split-Path $Log) | Out-Null
 
 $Arguments += @(
@@ -50,7 +49,7 @@ $Arguments += @(
     "--output", $Output,
     "--chunk-size", "10",
     "--kl-weight", "10",
-    "--batch-size", "12",
+    "--batch-size", "10",
     "--learning-rate", "1e-4",
     "--epochs", "$Epochs",
     "--max-batches-per-epoch", "100",

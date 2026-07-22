@@ -17,7 +17,7 @@ state encountered after Right tray push.
 
 - `collect_boundary_dataset.py`: generates one split of boundary-state NPZs.
 - `collect_boundary_splits.ps1`: generates train/val/test splits.
-- `train_boundary_act.ps1`: trains a fresh six-task, task-balanced ACT model.
+- `train_boundary_act.ps1`: trains the five-task boundary-replacement model.
 - `evaluate_boundary_act.ps1`: runs main, primitive, boundary, and hybrid tests.
 
 Run all PowerShell commands from the repository root on the Windows GPU host.
@@ -60,12 +60,27 @@ means the desired total file count when resuming, not the number to append.
 .\experiments\boundary_adaptation\train_boundary_act.ps1
 ```
 
-The fresh model uses six tasks, with 50 train and 10 validation episodes per
-task. Task-balanced sampling and batch size 12 place two samples from every
-task in each idealized balanced batch. Checkpoints are written to:
+The fresh model uses five tasks, with 50 train and 10 validation episodes per
+task. It replaces ordinary `left_pick_place` with
+`left_pick_place_after_right_push`; it does not add both datasets. This keeps
+the comparison against the original composition model fixed at 250 training
+episodes. Task-balanced sampling and batch size 10 place two samples from
+every task in each balanced batch.
+
+The five training tasks are:
 
 ```text
-checkpoints/language_act_boundary_balanced_300
+seen_lr
+left_tray_push
+right_tray_push
+right_pick_place
+left_pick_place_after_right_push
+```
+
+Checkpoints are written to:
+
+```text
+checkpoints/language_act_boundary_replacement_250
 ```
 
 Do not resume a five-task checkpoint: the task mixture and normalization
@@ -94,12 +109,12 @@ Individual suites can be selected with `main`, `primitives`, `boundary`, or
 Results are saved under:
 
 ```text
-results/act_boundary/<checkpoint>/
+results/act_boundary_replacement/<checkpoint>/
 ```
 
 The decisive comparisons are:
 
-- boundary Left PnP versus ordinary Left PnP
+- boundary Left PnP versus held-out ordinary Left PnP
 - unseen RL before versus after boundary-state training
 - Expert Right push -> ACT Left PnP in the hybrid suite
 

@@ -21,7 +21,7 @@ $CheckpointFiles = @{
     "latest" = "latest.pt"
 }
 $CheckpointPath = Join-Path $ProjectRoot (
-    "checkpoints\language_act_boundary_balanced_300\" +
+    "checkpoints\language_act_boundary_replacement_250\" +
     $CheckpointFiles[$Checkpoint]
 )
 if (-not (Test-Path $CheckpointPath)) {
@@ -30,7 +30,7 @@ if (-not (Test-Path $CheckpointPath)) {
 
 $DataRoot = Join-Path $ProjectRoot "datasets\aloha2-role-composition\raw_npz"
 $ResultRoot = Join-Path $ProjectRoot (
-    "results\act_boundary\" + $Checkpoint.Replace("-", "_")
+    "results\act_boundary_replacement\" + $Checkpoint.Replace("-", "_")
 )
 $LimitArgs = @()
 if ($Limit -gt 0) {
